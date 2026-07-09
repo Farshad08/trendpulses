@@ -1,0 +1,6 @@
+{
+  "name": "Stock Market Trend Prediction",
+  "description": "A sophisticated stock trend forecasting and technical analysis dashboard featuring historical simulation, statistical predictions, custom backtesting, and AI-powered market insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
