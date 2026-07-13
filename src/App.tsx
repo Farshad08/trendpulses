@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { ChartDataPoint, ForecastModelType, Hyperparameters, PredictionPoint, EvaluationMetrics } from "./types";
+import { ChartDataPoint, ForecastModelType, Hyperparameters, PredictionPoint, EvaluationMetrics, AlertNotification } from "./types";
 import { augmentStockData } from "./utils/indicators";
 import IndicatorCharts from "./components/IndicatorCharts";
 import ModelSelector from "./components/ModelSelector";
 import TuningSuite from "./components/TuningSuite";
 import BacktestSuite from "./components/BacktestSuite";
 import AIAdvisor from "./components/AIAdvisor";
+import AlertsCenter from "./components/AlertsCenter";
 import {
   TrendingUp,
   Cpu,
@@ -17,8 +18,10 @@ import {
   Activity,
   ArrowUpRight,
   ArrowDownRight,
-  Coins
+  Coins,
+  Bell
 } from "lucide-react";
+
 
 const SUPPORTED_TICKERS = [
   { symbol: "RELIANCE", name: "Reliance Industries Ltd.", sector: "Energy, Retail & Telecom" },
@@ -50,9 +53,36 @@ export default function App() {
   const [data, setData] = useState<ChartDataPoint[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
+  const [isRealData, setIsRealData] = useState<boolean>(false);
 
   // Navigation state
-  const [activeTab, setActiveTab] = useState<"dashboard" | "models" | "tuning" | "backtest" | "ai">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "models" | "tuning" | "backtest" | "ai" | "alerts">("dashboard");
+
+  // Notifications global state to sync counts in the header
+  const [notifications, setNotifications] = useState<AlertNotification[]>([]);
+
+  // Periodically reload unread notifications from local storage to keep navbar badge synchronized
+  useEffect(() => {
+    const syncLogs = () => {
+      const saved = localStorage.getItem("alert_notifications");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            setNotifications(parsed);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    };
+
+    syncLogs();
+    
+    // Sync storage every 2 seconds to update header badge dynamically
+    const interval = setInterval(syncLogs, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Forecasting parameters & states
   const [activeModel, setActiveModel] = useState<ForecastModelType>("linear");
@@ -73,9 +103,11 @@ export default function App() {
     try {
       const response = await fetch(`/api/stock-data?ticker=${ticker}&days=${historyDays}`);
       if (!response.ok) {
-        throw new Error("Failed to retrieve historical market data from service.");
+        const errorJson = await response.json().catch(() => ({}));
+        throw new Error(errorJson.error || "Failed to retrieve historical market data from service.");
       }
       const json = await response.json();
+      setIsRealData(!!json.isReal);
       
       // Augment the raw candles with our local technical indicators
       const augmented = augmentStockData(json.data);
@@ -220,6 +252,25 @@ export default function App() {
                 <option value={360}>Last 360 Days</option>
               </select>
             </div>
+
+            {/* Quick Alerts Bell Shortcut */}
+            <button
+              onClick={() => setActiveTab("alerts")}
+              className={`relative p-2.5 rounded-xl border transition cursor-pointer ${
+                activeTab === "alerts"
+                  ? "bg-indigo-600/10 border-indigo-500/30 text-indigo-400"
+                  : "bg-white/[0.03] border-white/10 text-neutral-400 hover:text-white hover:bg-white/5"
+              }`}
+              title="Predictive Alerts & Notifications Suite"
+            >
+              <Bell size={15} />
+              {notifications.filter((n) => !n.read).length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-mono text-[8px] font-extrabold w-3.5 h-3.5 rounded-full flex items-center justify-center animate-pulse">
+                  {notifications.filter((n) => !n.read).length}
+                </span>
+              )}
+            </button>
+
           </div>
         </div>
       </header>
@@ -254,7 +305,18 @@ export default function App() {
               <div className="bg-[#080808] border border-white/10 p-5 rounded-2xl shadow-sm flex flex-col justify-between relative overflow-hidden">
                 <div className="flex justify-between items-start">
                   <div>
-                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">Real-time Asset Quote</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">Real-time Asset Quote</span>
+                      {isRealData ? (
+                        <span className="text-[8px] font-extrabold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-wider animate-pulse whitespace-nowrap">
+                          ● Real Live Feed
+                        </span>
+                      ) : (
+                        <span className="text-[8px] font-extrabold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 uppercase tracking-wider whitespace-nowrap">
+                          ● Synthetic Feed
+                        </span>
+                      )}
+                    </div>
                     <span className="text-2xl font-extrabold text-white font-mono mt-1 block">
                       ₹{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
@@ -403,6 +465,23 @@ export default function App() {
                   <Sparkles size={14} />
                   AI Advisor
                 </button>
+                <button
+                  onClick={() => setActiveTab("alerts")}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition cursor-pointer relative ${
+                    activeTab === "alerts"
+                      ? "bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 shadow-sm"
+                      : "text-neutral-400 hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  <Bell size={14} />
+                  Alerts & Notifications
+                  {notifications.filter((n) => !n.read).length > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-mono text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center animate-bounce">
+                      {notifications.filter((n) => !n.read).length}
+                    </span>
+                  )}
+                </button>
+
               </nav>
             </div>
 
@@ -443,6 +522,17 @@ export default function App() {
                   activeModel={activeModel}
                   predictions={forecastPoints}
                   metrics={metrics}
+                />
+              )}
+
+              {activeTab === "alerts" && (
+                <AlertsCenter
+                  currentTicker={ticker}
+                  setTicker={(t) => {
+                    setTicker(t);
+                    setActiveTab("dashboard");
+                  }}
+                  SUPPORTED_TICKERS={SUPPORTED_TICKERS}
                 />
               )}
             </div>

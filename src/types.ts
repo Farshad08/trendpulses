@@ -103,3 +103,27 @@ export interface OptimizingParamsState {
     knn: KNNParams;
   };
 }
+
+export type AlertConditionType = "strong_bullish" | "strong_bearish" | "breakout_up" | "breakout_down";
+
+export interface AlertRule {
+  id: string;
+  ticker: string;
+  condition: AlertConditionType;
+  thresholdPercent?: number; // E.g. 5% forecast rise
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface AlertNotification {
+  id: string;
+  ruleId?: string;
+  ticker: string;
+  title: string;
+  message: string;
+  type: "success" | "danger" | "info"; // success = bullish (green), danger = bearish (red), info = neutral/blue
+  timestamp: string;
+  read: boolean;
+  priceAtAlert: number;
+}
+

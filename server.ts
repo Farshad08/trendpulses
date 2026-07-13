@@ -276,8 +276,99 @@ function generateHistoricalData(ticker: string, totalDays: number): StockBar[] {
   return data;
 }
 
+// Fetch real historical stock data from Yahoo Finance API
+async function fetchRealStockData(ticker: string, totalDays: number): Promise<StockBar[] | null> {
+  const upperTicker = ticker.toUpperCase();
+  let symbol = upperTicker;
+  
+  const usTickers = ["AAPL", "TSLA", "NVDA", "SPY", "QQQ", "AMZN", "GE"];
+  const isUS = usTickers.includes(upperTicker);
+  const hasSuffix = upperTicker.includes(".") || upperTicker.includes("-") || upperTicker.endsWith("=F");
+  
+  if (!isUS && !hasSuffix) {
+    symbol = `${upperTicker}.NS`;
+  }
+
+  // Determine standard Yahoo range query param
+  let range = "1y";
+  if (totalDays <= 30) range = "3mo";
+  else if (totalDays <= 90) range = "6mo";
+  else if (totalDays <= 180) range = "1y";
+  else if (totalDays <= 365) range = "2y";
+  else range = "5y";
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
+  
+  console.log(`Fetching real stock data from Yahoo Finance for: ${symbol} (URL: ${url})`);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+      }
+    });
+
+    if (!res.ok) {
+      console.warn(`Yahoo Finance request failed for ${symbol} with status: ${res.status}`);
+      return null;
+    }
+
+    const json = await res.json() as any;
+    const result = json.chart?.result?.[0];
+    if (!result) {
+      console.warn(`No chart results returned from Yahoo Finance for symbol: ${symbol}`);
+      return null;
+    }
+
+    const timestamps: number[] = result.timestamp || [];
+    const indicators = result.indicators?.quote?.[0] || {};
+    const opens: (number | null)[] = indicators.open || [];
+    const highs: (number | null)[] = indicators.high || [];
+    const lows: (number | null)[] = indicators.low || [];
+    const closes: (number | null)[] = indicators.close || [];
+    const volumes: (number | null)[] = indicators.volume || [];
+
+    if (timestamps.length === 0) {
+      console.warn(`Empty timestamps from Yahoo Finance for symbol: ${symbol}`);
+      return null;
+    }
+
+    const stockBars: StockBar[] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const open = opens[i];
+      const high = highs[i];
+      const low = lows[i];
+      const close = closes[i];
+      const volume = volumes[i];
+
+      // Ignore days with missing price elements
+      if (open != null && high != null && low != null && close != null) {
+        const dateStr = new Date(timestamps[i] * 1000).toISOString().split("T")[0];
+        stockBars.push({
+          date: dateStr,
+          open: parseFloat(open.toFixed(2)),
+          high: parseFloat(high.toFixed(2)),
+          low: parseFloat(low.toFixed(2)),
+          close: parseFloat(close.toFixed(2)),
+          volume: volume || 0
+        });
+      }
+    }
+
+    if (stockBars.length === 0) {
+      return null;
+    }
+
+    // Keep up to the last totalDays bars
+    return stockBars.slice(-totalDays);
+  } catch (err) {
+    console.error(`Error fetching Yahoo Finance stock data for ${symbol}:`, err);
+    return null;
+  }
+}
+
 // 1. Get stock historical data API
-app.get("/api/stock-data", (req, res) => {
+app.get("/api/stock-data", async (req, res) => {
   try {
     const ticker = (req.query.ticker as string) || "AAPL";
     const days = parseInt(req.query.days as string) || 180;
@@ -286,8 +377,32 @@ app.get("/api/stock-data", (req, res) => {
       return res.status(400).json({ error: "Days must be between 30 and 730" });
     }
 
-    const stockData = generateHistoricalData(ticker, days);
-    res.json({ ticker: ticker.toUpperCase(), data: stockData });
+    const upperTicker = ticker.toUpperCase().trim();
+
+    // Try fetching real market data from Yahoo Finance
+    const realData = await fetchRealStockData(upperTicker, days);
+    if (realData && realData.length > 0) {
+      console.log(`Successfully fetched ${realData.length} real stock bars for ${upperTicker}`);
+      return res.json({ ticker: upperTicker, data: realData, isReal: true });
+    }
+
+    // List of predefined preset tickers that are allowed to fall back to synthetic data
+    const PRESETS = [
+      "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIAIRTEL", 
+      "ITC", "LT", "HINDUNILVR", "TATAMOTORS", "COALINDIA", "SUNPHARMA", "WIPRO", 
+      "ASIANPAINT", "ADANIENT", "BAJFINANCE", "TITAN", "ZOMATO", "MARUTI"
+    ];
+
+    if (!PRESETS.includes(upperTicker)) {
+      return res.status(404).json({ 
+        error: `Ticker symbol '${upperTicker}' was not found on the live stock exchanges. Please enter a valid Indian stock symbol (e.g., TATASTEEL, SBIIN, WIPRO) or select a preset.` 
+      });
+    }
+
+    // Fallback to generated historical data if fetch fails or ticker is not found
+    console.log(`Falling back to synthetic historical data for ${upperTicker}`);
+    const stockData = generateHistoricalData(upperTicker, days);
+    res.json({ ticker: upperTicker, data: stockData, isReal: false });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
