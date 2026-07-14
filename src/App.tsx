@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { ChartDataPoint, ForecastModelType, Hyperparameters, PredictionPoint, EvaluationMetrics, AlertNotification } from "./types";
 import { augmentStockData } from "./utils/indicators";
+import {
+  trainLinearRegression,
+  trainExponentialSmoothing,
+  trainKNNRegression,
+  validateForecastModel
+} from "./utils/models";
 import IndicatorCharts from "./components/IndicatorCharts";
 import ModelSelector from "./components/ModelSelector";
 import TuningSuite from "./components/TuningSuite";
@@ -123,6 +129,80 @@ export default function App() {
   useEffect(() => {
     fetchStockData();
   }, [ticker, historyDays]);
+
+  // Auto-calculate default forecast when data loads so AI tab is immediately functional
+  useEffect(() => {
+    if (data.length < 30) return;
+    
+    // Check if predictions are empty or stale (belong to a different ticker / older date)
+    const lastDataPoint = data[data.length - 1];
+    const isStale = forecastPoints.length === 0 || 
+                    new Date(forecastPoints[0].date) <= new Date(lastDataPoint.date);
+                    
+    if (!isStale) return;
+
+    const prices = data.map((d) => d.close);
+    let rawPredictions: number[] = [];
+
+    if (activeModel === "linear") {
+      rawPredictions = trainLinearRegression(prices, hyperparams.linear.lookback, horizon);
+    } else if (activeModel === "exponential") {
+      rawPredictions = trainExponentialSmoothing(
+        prices,
+        hyperparams.exponential.lookback,
+        horizon,
+        hyperparams.exponential.alpha,
+        hyperparams.exponential.beta
+      );
+    } else if (activeModel === "knn") {
+      rawPredictions = trainKNNRegression(
+        data,
+        hyperparams.knn.lookback,
+        horizon,
+        hyperparams.knn.k,
+        hyperparams.knn.features
+      );
+    }
+
+    const lastDate = new Date(lastDataPoint.date);
+    const futurePoints: PredictionPoint[] = [];
+
+    for (let i = 0; i < horizon; i++) {
+      const nextDate = new Date(lastDate);
+      nextDate.setDate(lastDate.getDate() + i + 1);
+      const dateStr = nextDate.toISOString().split("T")[0];
+
+      const volatilityOffset = lastDate.getMilliseconds() % 2 === 0 ? 0.015 : 0.02;
+      const standardError = lastDate.getMilliseconds() % 2 === 0 ? 3.5 : 4.2;
+      const deviation = (i + 1) * (rawPredictions[i] * volatilityOffset);
+
+      futurePoints.push({
+        date: dateStr,
+        price: rawPredictions[i],
+        upper: parseFloat((rawPredictions[i] + deviation + standardError).toFixed(2)),
+        lower: parseFloat(Math.max(0, rawPredictions[i] - deviation - standardError).toFixed(2))
+      });
+    }
+
+    const valMetrics = validateForecastModel(
+      data,
+      activeModel,
+      activeModel === "linear"
+        ? hyperparams.linear.lookback
+        : activeModel === "exponential"
+        ? hyperparams.exponential.lookback
+        : hyperparams.knn.lookback,
+      horizon,
+      activeModel === "linear"
+        ? {}
+        : activeModel === "exponential"
+        ? { alpha: hyperparams.exponential.alpha, beta: hyperparams.exponential.beta }
+        : { k: hyperparams.knn.k, features: hyperparams.knn.features }
+    );
+
+    setForecastPoints(futurePoints);
+    setMetrics(valMetrics);
+  }, [data, activeModel, horizon, hyperparams, forecastPoints]);
 
   // Callback to receive predictions from ModelSelector so other tabs (AIAdvisor/Backtest) can access it
   const handleForecastComputed = (
